@@ -29,9 +29,11 @@ class Currency(commands.Cog):
         self.emoji = get(self.bot.emojis, name='flowers')
 
     # UTILITY
-    @commands.command(aliases=['me'])
+    @commands.command(
+            aliases=['me'],
+            help="If specified, this command shows the profile of a user. If the user is omitted, it shows your profile.",
+            brief="Shows profile.")
     async def profile(self, ctx, user: User = None):
-        """Shows a user profile."""
         if not user:
             user = ctx.author
         userid = str(user.id)
@@ -40,9 +42,11 @@ class Currency(commands.Cog):
         em.add_field(name="Flowers", value=f"{file[userid]['flowers']}", inline=False)
         await ctx.send(embed=em)
 
-    @commands.command()
+    @commands.command(
+            help="This command shows the profile of a user after deleting your command message.",
+            brief="Silently shows a profile."
+    )
     async def spy(self, ctx, user: User):
-        """Spies a user's profile."""
         await ctx.message.delete()
         userid = str(user.id)
         file = await read_currency(userid)
@@ -50,7 +54,10 @@ class Currency(commands.Cog):
         em.add_field(name="Flowers", value=f"{file[userid]['flowers']}", inline=False)
         await ctx.send(embed=em)
 
-    @commands.command(aliases=['lb', 'top'])
+    @commands.command(
+            aliases=['lb', 'top'],
+            help="It displays all users in descending order based on the amount of flowers they have.",
+            brief="Shows the leaderboard.")
     async def leaderboard(self, ctx):
         """Displays the top 10 users by flower count."""
         data = await read_currency(str(ctx.author.id))
@@ -66,7 +73,10 @@ class Currency(commands.Cog):
         em.description = leaderboard_text or "No data available yet!"
         await ctx.send(embed=em)
 
-    @commands.command()
+    @commands.command(
+            help="It allows you to gift an amount of flowers to a user. Syntax: `give [user] [amount]`",
+            brief="Gifts flowers to a user."
+    )
     async def give(self, ctx, user: User, amount: int):
         if amount < 0:
             await ctx.send(f"You cannot gift negative {self.emoji} flowers!")
@@ -87,9 +97,12 @@ class Currency(commands.Cog):
         await write_currency(file)
 
     # EARN
-    @commands.command()
+    @commands.command(
+            help="It grants you between 50 and 200 flowers.",
+            brief="Gives you some flowers. "
+    )
     @commands.cooldown(1, 300, commands.BucketType.user)
-    async def claim(self, ctx):
+    async def work(self, ctx):
         amount = np.random.randint(50, 200)
         userid = str(ctx.author.id)
         file = await read_currency(userid)
@@ -99,7 +112,10 @@ class Currency(commands.Cog):
         await write_currency(file)
 
     # GAMBLING
-    @commands.command(aliases=['bf'])
+    @commands.command(
+            aliases=['bf'],
+            help="Toss a coin, and bet on the result! Syntax: `betflip [h/t] [amount]`",
+            brief="Bets on a coin flip.")
     async def betflip(self, ctx, bet: str, amount: int):
         if amount < 0:
             await ctx.send(f"You cannot bet negative {self.emoji} flowers!")
@@ -131,7 +147,9 @@ class Currency(commands.Cog):
 
         await write_currency(file)
 
-    @commands.command()
+    @commands.command(
+            help="Play a game of roulette! Syntax: `roulette [number/red/black/odd/even/high/low/first/second/third] [amount]`"
+    )
     async def roulette(self, ctx, bet, amount: int):
         if amount < 0:
             await ctx.send(f"You cannot bet negative {self.emoji} flowers!")
