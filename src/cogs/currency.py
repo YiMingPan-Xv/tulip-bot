@@ -22,7 +22,7 @@ class Currency(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
         self.emoji = None
-        self.active_games = {}
+        self.bj_active_games = {}
 
     @commands.Cog.listener()
     async def on_ready(self):
@@ -148,7 +148,8 @@ class Currency(commands.Cog):
         await write_currency(file)
 
     @commands.command(
-            help="Play a game of roulette! Syntax: `roulette [number/red/black/odd/even/high/low/first/second/third] [amount]`"
+            help="Play a game of roulette! Syntax: `roulette [number/red/black/odd/even/high/low/first/second/third] [amount]`",
+            brief="Bets on the roulette."
     )
     async def roulette(self, ctx, bet, amount: int):
         if amount < 0:
@@ -192,7 +193,10 @@ class Currency(commands.Cog):
 
         await write_currency(file)
 
-    @commands.command()
+    @commands.command(
+            help="Join the raffle: The winner takes it all!",
+            brief="Starts a raffle."
+    )
     async def rafflecur(self, ctx, amount: int):
         if amount < 0:
             await ctx.send(f"You cannot bet negative {self.emoji} flowers!")
@@ -249,13 +253,16 @@ class Currency(commands.Cog):
         await ctx.send(f"Congratulations <@{winner_id}>! You won the raffle"
                        f"and received {total_flowers} {self.emoji} flowers!")
 
-    @commands.command(aliases=['bj'])
+    @commands.command(
+            aliases=['bj'],
+            help="Play a game of blackjack!",
+            brief="Bets on blackjack.")
     async def blackjack(self, ctx, amount: int):
         if amount < 0:
             await ctx.send(f"You cannot bet negative {self.emoji} flowers!")
             return
         userid = str(ctx.author.id)
-        if userid in self.active_games:
+        if userid in self.bj_active_games:
             await ctx.send("You're already in a blackjack game!")
             return
         file = await read_currency(userid)
@@ -271,7 +278,7 @@ class Currency(commands.Cog):
             "dealer_hand": [],
             "bet": amount
         }
-        self.active_games[userid] = game
+        self.bj_active_games[userid] = game
 
         # Draw a card from the player's deck
         def draw():
@@ -312,7 +319,7 @@ class Currency(commands.Cog):
                 await ctx.send("You took too long. Dealer wins by default!")
                 file[userid]['flowers'] -= amount
                 await write_currency(file)
-                del self.active_games[userid]
+                del self.bj_active_games[userid]
                 return
 
             if msg.content.lower() == 'hit':
@@ -323,7 +330,7 @@ class Currency(commands.Cog):
                     await ctx.send("You busted! Dealer wins!")
                     file[userid]['flowers'] -= amount
                     await write_currency(file)
-                    del self.active_games[userid]
+                    del self.bj_active_games[userid]
                     return
             elif msg.content.lower() == 'stand':
                 break
@@ -351,10 +358,13 @@ class Currency(commands.Cog):
 
         await ctx.send(result_msg)
         await write_currency(file)
-        del self.active_games[userid]
+        del self.bj_active_games[userid]
 
     # CHALLENGE
-    @commands.command()
+    @commands.command(
+            help="Search flowers beyond the breach! Type in the password to claim flowers before the breach closes.",
+            brief="Gives some flowers after typing a password."
+    )
     @commands.cooldown(1, 1800, commands.BucketType.user)
     async def breach(self, ctx):
         amount = np.random.randint(250, 600)
@@ -404,7 +414,10 @@ class Currency(commands.Cog):
         )
         await write_currency(file)
 
-    @commands.command()
+    @commands.command(
+            help="Steal flowers from a user! They won't know who it was unless they were already looking at the channel!",
+            brief="Steals someone else's flowers."
+    )
     @commands.cooldown(1, 600, commands.BucketType.user)
     async def steal(self, ctx, user: User):
         await ctx.message.delete()
@@ -412,7 +425,7 @@ class Currency(commands.Cog):
         victimid = str(user.id)
         file = await read_currency(victimid)
 
-        amount = int((np.random.randint(25, 75) / 100) * file[victimid]['flowers'])
+        amount = int((np.random.randint(25, 50) / 100) * file[victimid]['flowers'])
 
         file[victimid]['flowers'] -= amount
         file[victimid]['stolen'][0] = stealerid
@@ -423,7 +436,10 @@ class Currency(commands.Cog):
         await ctx.send("You can use `!accuse` to accuse who you think it was! You only have one chance at it.")
         await write_currency(file)
 
-    @commands.command()
+    @commands.command(
+            help="Use this command to accuse someone of stealing from you! If you guess correctly, you get some flowers from the stealer!",
+            brief="Accuses someone of stealing."
+    )
     async def accuse(self, ctx, user: User):
         accuserid = str(ctx.author.id)
         accusedid = str(user.id)
