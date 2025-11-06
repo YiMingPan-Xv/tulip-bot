@@ -1,5 +1,5 @@
 import logging
-import json
+import aiosqlite
 from pathlib import Path
 import secrets
 import asyncio
@@ -16,6 +16,7 @@ from discord.utils import get
 logger = logging.getLogger("root")
 root_path = Path(__file__).parents[2]
 characters = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+database_path = str(root_path / "data" / "currency.db")
 
 
 class Currency(commands.Cog):
@@ -27,19 +28,30 @@ class Currency(commands.Cog):
     @commands.Cog.listener()
     async def on_ready(self):
         self.emoji = get(self.bot.emojis, name='flowers')
+        async with aiosqlite.connect(database_path) as db:
+            await db.execute("""
+                CREATE TABLE IF NOT EXISTS currency (
+                    user_id INTEGER PRIMARY KEY,
+                    balance INTEGER NOT NULL DEFAULT 0,
+                    stolen INTEGER DEFAULT 0,
+                    stolen_amount INTEGER DEFAULT 0
+                )
+            """)
+            await db.commit()
+            print("The database is correctly loaded!")
 
     # UTILITY
-    @commands.command(
+    @commands.command(  # FIXME
             aliases=['me'],
             help="If specified, this command shows the profile of a user. If the user is omitted, it shows your profile.",
             brief="Shows profile.")
     async def profile(self, ctx, user: User = None):
         if not user:
             user = ctx.author
-        userid = str(user.id)
-        file = await read_currency(userid)
+        user_id = user.id
+        balance = await read_currency(user_id)
         em = Embed(title="Net Worth", description=f"<@{user.id}>'s Profile", color=0x00aa00)
-        em.add_field(name="Flowers", value=f"{file[userid]['flowers']}", inline=False)
+        em.add_field(name="Flowers", value=f"{balance}", inline=False)
         await ctx.send(embed=em)
 
     @commands.command(
@@ -48,10 +60,10 @@ class Currency(commands.Cog):
     )
     async def spy(self, ctx, user: User):
         await ctx.message.delete()
-        userid = str(user.id)
-        file = await read_currency(userid)
+        user_id = user.id
+        balance = await read_currency(user_id)
         em = Embed(title="Net Worth", description=f"<@{user.id}>'s Profile", color=0x00aa00)
-        em.add_field(name="Flowers", value=f"{file[userid]['flowers']}", inline=False)
+        em.add_field(name="Flowers", value=f"{balance}", inline=False)
         await ctx.send(embed=em)
 
     @commands.command(
@@ -60,20 +72,22 @@ class Currency(commands.Cog):
             brief="Shows the leaderboard.")
     async def leaderboard(self, ctx):
         """Displays the top 10 users by flower count."""
-        data = await read_currency(str(ctx.author.id))
+        async with aiosqlite.connect(database_path) as db:
+            async with db.execute("SELECT user_id, balance FROM currency") as cursor:
+                rows = await cursor.fetchall()
+                print(rows)
 
-        sorted_data = sorted(data.items(), key=lambda x: x[1]['flowers'], reverse=True)
+        sorted_rows = sorted(rows, key=lambda x: x[1], reverse=True)
 
         em = Embed(title=f"{self.emoji} Leaderboard", color=0xaaaa00)
         leaderboard_text = ""
-        for i, (userid, info) in enumerate(sorted_data[:10], start=1):
-            user = await ctx.bot.fetch_user(int(userid))
-            leaderboard_text += f"**{i}.** {user.mention} --- {info['flowers']} flowers\n"
+        for i, (user_id, amount) in enumerate(sorted_rows[:10], start=1):
+            leaderboard_text += f"**{i}.** <@{user_id}> --- {amount} flowers\n"
 
         em.description = leaderboard_text or "No data available yet!"
         await ctx.send(embed=em)
 
-    @commands.command(
+    @commands.command(  
             help="It allows you to gift an amount of flowers to a user. Syntax: `give [user] [amount]`",
             brief="Gifts flowers to a user."
     )
@@ -81,20 +95,16 @@ class Currency(commands.Cog):
         if amount < 0:
             await ctx.send(f"You cannot gift negative {self.emoji} flowers!")
             return
-        authorid = str(ctx.author.id)
-        userid = str(user.id)
-        file = await read_currency(authorid)
+        balance = await read_currency(ctx.author.id)
 
-        if amount > file[authorid]['flowers']:
+        if amount > balance:
             await ctx.send(f"You don't have enough {self.emoji} flowers to give!")
             return
 
-        file[authorid]['flowers'] -= amount
-        file[userid]['flowers'] += amount
+        await update_balance(ctx.author.id, -amount)
+        await update_balance(user.id, amount)
 
-        await ctx.send(f"<@{authorid}> gifted {amount} {self.emoji} flowers to <@{userid}>!")
-
-        await write_currency(file)
+        await ctx.send(f"<@{ctx.author.id}> gifted {amount} {self.emoji} flowers to <@{user.id}>!")
 
     # EARN
     @commands.command(
@@ -104,12 +114,10 @@ class Currency(commands.Cog):
     @commands.cooldown(1, 300, commands.BucketType.user)
     async def work(self, ctx):
         amount = np.random.randint(50, 200)
-        userid = str(ctx.author.id)
-        file = await read_currency(userid)
-        file[userid]['flowers'] += amount
+        balance = await read_currency(ctx.author.id)
+        await update_balance(ctx.author.id, amount)
         await ctx.send(f"You collected {amount} {self.emoji} flowers!")
-        await ctx.send(f"{ctx.author.mention}, you now have {file[userid]['flowers']} {self.emoji} flowers.")
-        await write_currency(file)
+        await ctx.send(f"{ctx.author.mention}, you now have {balance + amount} {self.emoji} flowers.")
 
     # GAMBLING
     @commands.command(
@@ -120,32 +128,28 @@ class Currency(commands.Cog):
         if amount < 0:
             await ctx.send(f"You cannot bet negative {self.emoji} flowers!")
             return
-        userid = str(ctx.author.id)
-        file = await read_currency(userid)
-        win_mul = 1
-        lose_mul = 1
+        user_id = ctx.author.id
+        balance = await read_currency(user_id)
 
         if bet not in ['h', 't']:
             await ctx.send(f"Results include 'h' and 't'! {bet} is invalid!")
             return
 
-        if file[userid]['flowers'] < amount:
+        if balance < amount:
             await ctx.send(f"You cannot bet more than what you have!\n"
-                           f"You currently have {file[userid]['flowers']} {self.emoji} flowers!")
+                           f"You currently have {balance} {self.emoji} flowers!")
             return
 
         result = np.random.choice(['heads', 'tails'])
         await ctx.send(f"Result: {result}!")
         if bet == result[0]:
-            final = round(amount * win_mul)
-            file[userid]['flowers'] += final
+            final = round(amount)
+            await update_balance(user_id, final)
             await ctx.send(f"You won! You gained {final} {self.emoji} flowers!")
         else:
-            final = round(amount * lose_mul)
-            file[userid]['flowers'] -= final
+            final = round(amount)
+            await update_balance(user_id, -final)
             await ctx.send(f"You lose! You lost {final} {self.emoji} flowers!")
-
-        await write_currency(file)
 
     @commands.command(
             help="Play a game of roulette! Syntax: `roulette [number/red/black/odd/even/high/low/first/second/third] [amount]`",
@@ -155,13 +159,13 @@ class Currency(commands.Cog):
         if amount < 0:
             await ctx.send(f"You cannot bet negative {self.emoji} flowers!")
             return
-        userid = str(ctx.author.id)
-        file = await read_currency(userid)
+        user_id = ctx.author.id
+        balance = await read_currency(user_id)
         allowed = ['red', 'black', 'odd', 'even', 'high', 'low', 'first', 'second', 'third']
 
-        if file[userid]['flowers'] < amount:
+        if balance < amount:
             await ctx.send(f"You cannot bet more than what you have!\n"
-                           f"You currently have {file[userid]['flowers']} {self.emoji} flowers!")
+                           f"You currently have {balance} {self.emoji} flowers!")
             return
 
         if bet not in allowed:
@@ -185,13 +189,11 @@ class Currency(commands.Cog):
 
         if await _check_roulette_win(bet, result):
             final = amount * bet_payout
-            file[userid]['flowers'] += final
+            await update_balance(user_id, final)
             await ctx.send(f"You won! You gained {final} {self.emoji} flowers!")
         else:
-            file[userid]['flowers'] -= amount
+            await update_balance(user_id, -amount)
             await ctx.send(f"You lose! You lost {amount} {self.emoji} flowers!")
-
-        await write_currency(file)
 
     @commands.command(
             help="Join the raffle: The winner takes it all!",
@@ -201,16 +203,15 @@ class Currency(commands.Cog):
         if amount < 0:
             await ctx.send(f"You cannot bet negative {self.emoji} flowers!")
             return
-        userid = str(ctx.author.id)
-        file = await read_currency(userid)
+        user_id = ctx.author.id
+        balance = await read_currency(user_id)
 
-        if file[userid]['flowers'] < amount:
+        if balance < amount:
             await ctx.send(f"You cannot raffle more than what you have!\n"
-                           f"You currently have {file[userid]['flowers']} {self.emoji} flowers!")
+                           f"You currently have {balance} {self.emoji} flowers!")
             return
 
-        file[userid]['flowers'] -= amount
-        await write_currency(file)
+        await update_balance(balance, -amount)
 
         await ctx.send(f"{ctx.author.mention} has started a raffle with {amount} {self.emoji} flowers! "
                        f"React with 🎉 to join within 30 seconds!")
@@ -227,28 +228,24 @@ class Currency(commands.Cog):
                 async for user in reaction.users():
                     if user.bot:
                         continue
-                    userid = str(user.id)
-                    if userid not in participants:
-                        user_file = await read_currency(userid)
-                        if user_file[userid]['flowers'] >= amount:
-                            user_file[userid]['flowers'] -= amount
-                            await write_currency(user_file)
-                            participants[userid] = amount
+                    participant_id = user.id
+                    if participant_id not in participants:
+                        participant_balance = await read_currency(participant_id)
+                        if participant_balance >= amount:
+                            await update_balance(participant_id, -amount)
+                            participants[participant_id] = amount
                         else:
                             await ctx.send(f"{user.mention} does not have enough flowers to join!")
 
         if not participants:
             await ctx.send("No one joined the raffle. Flowers returned!")
-            file[userid]['flowers'] += amount
-            await write_currency(file)
+            await update_balance(user_id, amount)
             return
 
         winner_id = np.random.choice(list(participants.keys()))
         total_flowers = sum(participants.values())
 
-        winner_file = await read_currency(str(winner_id))
-        winner_file[str(winner_id)]['flowers'] += total_flowers
-        await write_currency(winner_file)
+        await update_balance(winner_id, total_flowers)
 
         await ctx.send(f"Congratulations <@{winner_id}>! You won the raffle"
                        f"and received {total_flowers} {self.emoji} flowers!")
@@ -261,15 +258,15 @@ class Currency(commands.Cog):
         if amount < 0:
             await ctx.send(f"You cannot bet negative {self.emoji} flowers!")
             return
-        userid = str(ctx.author.id)
-        if userid in self.bj_active_games:
+        user_id = ctx.author.id
+        if user_id in self.bj_active_games:
             await ctx.send("You're already in a blackjack game!")
             return
-        file = await read_currency(userid)
+        balance = await read_currency(user_id)
 
-        if file[userid]['flowers'] < amount:
+        if balance < amount:
             await ctx.send(f"You cannot bet more than what you have!\n"
-                           f"You currently have {file[userid]['flowers']} {self.emoji} flowers!")
+                           f"You currently have {balance} {self.emoji} flowers!")
             return
 
         game = {
@@ -278,7 +275,7 @@ class Currency(commands.Cog):
             "dealer_hand": [],
             "bet": amount
         }
-        self.bj_active_games[userid] = game
+        self.bj_active_games[user_id] = game
 
         # Draw a card from the player's deck
         def draw():
@@ -317,9 +314,8 @@ class Currency(commands.Cog):
                 msg = await self.bot.wait_for('message', check=check, timeout=30.0)
             except asyncio.TimeoutError:
                 await ctx.send("You took too long. Dealer wins by default!")
-                file[userid]['flowers'] -= amount
-                await write_currency(file)
-                del self.bj_active_games[userid]
+                await update_balance(user_id, amount)
+                del self.bj_active_games[user_id]
                 return
 
             if msg.content.lower() == 'hit':
@@ -328,9 +324,8 @@ class Currency(commands.Cog):
                 await ctx.send(f"You drew a {game['player_hand'][-1]} — total: {total}")
                 if total > 21:
                     await ctx.send("You busted! Dealer wins!")
-                    file[userid]['flowers'] -= amount
-                    await write_currency(file)
-                    del self.bj_active_games[userid]
+                    await update_balance(user_id, -amount)
+                    del self.bj_active_games[user_id]
                     return
             elif msg.content.lower() == 'stand':
                 break
@@ -349,16 +344,15 @@ class Currency(commands.Cog):
         result_msg = f"Your total: {player_total}\nDealer total: {dealer_total}\n"
         if dealer_total > 21 or player_total > dealer_total:
             result_msg += f"You win! You gained {amount} {self.emoji} flowers!"
-            file[userid]['flowers'] += amount
+            await update_balance(user_id, amount)
         elif player_total == dealer_total:
             result_msg += "It's a push! Nobody wins."
         else:
             result_msg += f"Dealer wins! You lost {amount} {self.emoji} flowers."
-            file[userid]['flowers'] -= amount
+            await update_balance(user_id, -amount)
 
         await ctx.send(result_msg)
-        await write_currency(file)
-        del self.bj_active_games[userid]
+        del self.bj_active_games[user_id]
 
     # CHALLENGE
     @commands.command(
@@ -405,14 +399,12 @@ class Currency(commands.Cog):
             return
 
         winner = winner_msg.author
-        userid = str(winner.id)
-        file = await read_currency(userid)
-        file[userid]['flowers'] += amount
+        user_id = winner.id
+        await update_balance(user_id, amount)
 
         await ctx.send(
             f"{winner.mention} breached through the dangers, and earned {amount} {self.emoji} flowers!\n"
         )
-        await write_currency(file)
 
     @commands.command(
             help="Steal flowers from a user! They won't know who it was unless they were already looking at the channel!",
@@ -421,46 +413,44 @@ class Currency(commands.Cog):
     @commands.cooldown(1, 600, commands.BucketType.user)
     async def steal(self, ctx, user: User):
         await ctx.message.delete()
-        stealerid = str(ctx.author.id)
-        victimid = str(user.id)
-        file = await read_currency(victimid)
+        stealer_id = ctx.author.id
+        victim_id = user.id
+        victim_balance = await read_currency(victim_id)
 
-        amount = int((np.random.randint(25, 50) / 100) * file[victimid]['flowers'])
+        amount = int((np.random.randint(25, 50) / 100) * victim_balance)
 
-        file[victimid]['flowers'] -= amount
-        file[victimid]['stolen'][0] = stealerid
-        file[victimid]['stolen'][1] = amount
-        file[stealerid]['flowers'] += amount
+        await update_balance(victim_id, -amount)
+        await update_steal_data(victim_id, stealer_id, amount)
+        await update_balance(stealer_id, amount)
 
-        await ctx.send(f"Someone stole from you <@{victimid}>! You lost {amount} {self.emoji} flowers!")
+        await ctx.send(f"Someone stole from you <@{victim_id}>! You lost {amount} {self.emoji} flowers!")
         await ctx.send("You can use `!accuse` to accuse who you think it was! You only have one chance at it.")
-        await write_currency(file)
 
     @commands.command(
             help="Use this command to accuse someone of stealing from you! If you guess correctly, you get some flowers from the stealer!",
             brief="Accuses someone of stealing."
     )
     async def accuse(self, ctx, user: User):
-        accuserid = str(ctx.author.id)
-        accusedid = str(user.id)
-        file = await read_currency(accuserid)
+        accuser_id = ctx.author.id
+        accused_id = user.id
+        culprit_id, stolen_amount = await read_steal_data(accuser_id)
 
-        if file[accuserid]['stolen'][0] is None:
+        if culprit_id == 0:
             await ctx.send("No one did anything to you yet! You cannot accuse someone!")
             return
 
-        if file[accuserid]['stolen'][0] == accusedid:
-            reward = int(file[accuserid]['stolen'][1] * 1.3)
-            file[accuserid]['flowers'] += reward
-            file[accusedid]['flowers'] -= reward
-            await ctx.send(f"You correctly accused <@{accusedid}>! "
+        if culprit_id == accused_id:
+            reward = int(stolen_amount * 1.3)
+
+            await update_balance(accuser_id, reward)
+            await update_balance(accused_id, -reward)
+
+            await ctx.send(f"You correctly accused <@{accused_id}>! "
                            f"You got {reward} {self.emoji} flowers out of the case!")
         else:
-            await ctx.send(f"You accused the wrong person! <@{accusedid}> was innocent!")
+            await ctx.send(f"You accused the wrong person! <@{accused_id}> was innocent!")
 
-        file[accuserid]['stolen'] = [None, 0]
-
-        await write_currency(file)
+        await update_steal_data(accuser_id, 0, 0)
 
 
 async def _check_roulette_win(bet, result):
@@ -489,32 +479,39 @@ async def _check_roulette_win(bet, result):
         return False
 
 
-async def _update_user(file, userid):
-    if userid not in file:
-        file[userid] = {}
-
-    file_path = root_path / "data" / "currency_template.json"
-    with open(file_path, "r") as f:
-        template = json.load(f)
-    for key, value in template.items():
-        if key not in file[userid]:
-            file[userid][key] = value
-    return file
+async def read_currency(user_id):
+    async with aiosqlite.connect(database_path) as db:
+        async with db.execute("SELECT balance FROM currency WHERE user_id = ?", (user_id,)) as cursor:
+            row = await cursor.fetchone()
+            return row[0] if row else 0
 
 
-async def read_currency(userid):
-    file_path = root_path / "data" / "currency.json"
-    with open(file_path, "r") as f:
-        file = json.load(f)
-    file = await _update_user(file, userid)
-    logging.debug(f"Loaded JSON file: {file}")
-    return file
+async def read_steal_data(user_id):
+    async with aiosqlite.connect(database_path) as db:
+        async with db.execute("SELECT stolen, stolen_amount FROM currency WHERE user_id = ?", (user_id,)) as cursor:
+            row = await cursor.fetchone()
+            return row[0] if row else 0, 0
 
 
-async def write_currency(file):
-    file_path = root_path / "data" / "currency.json"
-    with open(file_path, "w") as f:
-        json.dump(file, f)
+async def update_balance(user_id, delta):
+    async with aiosqlite.connect(database_path) as db:
+        await db.execute("""
+            INSERT INTO currency (user_id, balance)
+            VALUES (?, ?)
+            ON CONFLICT(user_id) DO UPDATE SET balance = balance + excluded.balance
+        """, (user_id, delta))
+        await db.commit()
+
+
+async def update_steal_data(user_id, stealer_id, steal_amount):
+    async with aiosqlite.connect(database_path) as db:
+        await db.execute("""
+            INSERT INTO currency (user_id, stolen, stolen_amount)
+            VALUES (?, ?, ?)
+            ON CONFLICT(user_id)
+                DO UPDATE SET stolen = excluded.stolen, stolen_amount = excluded.stolen_amount
+        """, (user_id, stealer_id, steal_amount))
+        await db.commit()
 
 
 async def setup(bot):
