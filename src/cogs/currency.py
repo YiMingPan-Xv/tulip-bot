@@ -87,7 +87,7 @@ class Currency(commands.Cog):
         em.description = leaderboard_text or "No data available yet!"
         await ctx.send(embed=em)
 
-    @commands.command(  
+    @commands.command(
             help="It allows you to gift an amount of flowers to a user. Syntax: `give [user] [amount]`",
             brief="Gifts flowers to a user."
     )
