@@ -91,14 +91,21 @@ class Currency(commands.Cog):
             help="It allows you to gift an amount of flowers to a user. Syntax: `give [user] [amount]`",
             brief="Gifts flowers to a user."
     )
-    async def give(self, ctx, user: User, amount: int):
-        if amount < 0:
-            await ctx.send(f"You cannot gift negative {self.emoji} flowers!")
-            return
+    async def give(self, ctx, user: User, amount):
         balance = await read_currency(ctx.author.id)
 
-        if amount > balance:
-            await ctx.send(f"You don't have enough {self.emoji} flowers to give!")
+        if amount == "all":
+            amount = balance
+        try:
+            amount = int(amount)
+            if amount < 0:
+                await ctx.send(f"You cannot gift negative {self.emoji} flowers!")
+                return
+            if amount > balance:
+                await ctx.send(f"You don't have enough {self.emoji} flowers to give!")
+                return
+        except ValueError:
+            await ctx.send(f"Unknown amount: {amount}")
             return
 
         await update_balance(ctx.author.id, -amount)
@@ -124,20 +131,27 @@ class Currency(commands.Cog):
             aliases=['bf'],
             help="Toss a coin, and bet on the result! Syntax: `betflip [h/t] [amount]`",
             brief="Bets on a coin flip.")
-    async def betflip(self, ctx, bet: str, amount: int):
-        if amount < 0:
-            await ctx.send(f"You cannot bet negative {self.emoji} flowers!")
-            return
-        user_id = ctx.author.id
-        balance = await read_currency(user_id)
-
+    async def betflip(self, ctx, bet: str, amount: str):
         if bet not in ['h', 't']:
             await ctx.send(f"Results include 'h' and 't'! {bet} is invalid!")
             return
 
-        if balance < amount:
-            await ctx.send(f"You cannot bet more than what you have!\n"
-                           f"You currently have {balance} {self.emoji} flowers!")
+        user_id = ctx.author.id
+        balance = await read_currency(user_id)
+
+        if amount == "all":
+            amount = balance
+        try:
+            amount = int(amount)
+            if amount < 0:
+                await ctx.send(f"You cannot bet negative {self.emoji} flowers!")
+                return
+            if balance < amount:
+                await ctx.send(f"You cannot bet more than what you have!\n"
+                               f"You currently have {balance} {self.emoji} flowers!")
+                return
+        except ValueError:
+            await ctx.send(f"Unknown amount: {amount}")
             return
 
         result = np.random.choice(['heads', 'tails'])
@@ -155,17 +169,24 @@ class Currency(commands.Cog):
             help="Play a game of roulette! Syntax: `roulette [number/red/black/odd/even/high/low/first/second/third] [amount]`",
             brief="Bets on the roulette."
     )
-    async def roulette(self, ctx, bet, amount: int):
-        if amount < 0:
-            await ctx.send(f"You cannot bet negative {self.emoji} flowers!")
-            return
+    async def roulette(self, ctx, bet, amount: str):
         user_id = ctx.author.id
         balance = await read_currency(user_id)
         allowed = ['red', 'black', 'odd', 'even', 'high', 'low', 'first', 'second', 'third']
 
-        if balance < amount:
-            await ctx.send(f"You cannot bet more than what you have!\n"
-                           f"You currently have {balance} {self.emoji} flowers!")
+        if amount == "all":
+            amount = balance
+        try:
+            amount = int(amount)
+            if amount < 0:
+                await ctx.send(f"You cannot bet negative {self.emoji} flowers!")
+                return
+            if balance < amount:
+                await ctx.send(f"You cannot bet more than what you have!\n"
+                               f"You currently have {balance} {self.emoji} flowers!")
+                return
+        except ValueError:
+            await ctx.send(f"Unknown amount: {amount}")
             return
 
         if bet not in allowed:
@@ -176,7 +197,7 @@ class Currency(commands.Cog):
                 await ctx.send(f"You can only bet on a number, or on the following allowed types: \
                                {', '.join(allowed)}.")
                 return
-        else:  # Check which bet it is
+        else:  # Get amount + check which bet it is
             bet = bet.lower()
             if bet in ['first', 'second', 'third']:
                 bet_payout = 2
@@ -199,16 +220,23 @@ class Currency(commands.Cog):
             help="Join the raffle: The winner takes it all!",
             brief="Starts a raffle."
     )
-    async def rafflecur(self, ctx, amount: int):
-        if amount < 0:
-            await ctx.send(f"You cannot bet negative {self.emoji} flowers!")
-            return
+    async def rafflecur(self, ctx, amount: str):
         user_id = ctx.author.id
         balance = await read_currency(user_id)
 
-        if balance < amount:
-            await ctx.send(f"You cannot raffle more than what you have!\n"
-                           f"You currently have {balance} {self.emoji} flowers!")
+        if amount == "all":
+            amount = balance
+        try:
+            amount = int(amount)
+            if amount < 0:
+                await ctx.send(f"You cannot bet negative {self.emoji} flowers!")
+                return
+            if balance < amount:
+                await ctx.send(f"You cannot bet more than what you have!\n"
+                               f"You currently have {balance} {self.emoji} flowers!")
+                return
+        except ValueError:
+            await ctx.send(f"Unknown amount: {amount}")
             return
 
         await update_balance(balance, -amount)
@@ -254,19 +282,26 @@ class Currency(commands.Cog):
             aliases=['bj'],
             help="Play a game of blackjack!",
             brief="Bets on blackjack.")
-    async def blackjack(self, ctx, amount: int):
-        if amount < 0:
-            await ctx.send(f"You cannot bet negative {self.emoji} flowers!")
-            return
+    async def blackjack(self, ctx, amount: str):
         user_id = ctx.author.id
         if user_id in self.bj_active_games:
             await ctx.send("You're already in a blackjack game!")
             return
         balance = await read_currency(user_id)
 
-        if balance < amount:
-            await ctx.send(f"You cannot bet more than what you have!\n"
-                           f"You currently have {balance} {self.emoji} flowers!")
+        if amount == "all":
+            amount = balance
+        try:
+            amount = int(amount)
+            if amount < 0:
+                await ctx.send(f"You cannot bet negative {self.emoji} flowers!")
+                return
+            if balance < amount:
+                await ctx.send(f"You cannot bet more than what you have!\n"
+                               f"You currently have {balance} {self.emoji} flowers!")
+                return
+        except ValueError:
+            await ctx.send(f"Unknown amount: {amount}")
             return
 
         game = {
