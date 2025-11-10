@@ -6,6 +6,7 @@ import asyncio
 from PIL import Image, ImageDraw, ImageFont
 import io
 import random
+from collections import Counter
 
 import numpy as np
 from discord import Embed, File, User
@@ -17,6 +18,15 @@ logger = logging.getLogger("root")
 root_path = Path(__file__).parents[2]
 characters = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
 database_path = str(root_path / "data" / "currency.db")
+PAYOUTS = {
+    '🍒': {1: 0.2, 2: 0.5, 3: 2.0},
+    '🍋': {1: 0.0, 2: 0.2, 3: 1.0},
+    '🔔': {1: 0.0, 2: 0.5, 3: 2.5},
+    '🍫': {1: 0.0, 2: 1.0, 3: 7.5},
+    '🎰': {1: 0.0, 2: 2.0, 3: 15.0},
+    '💎': {1: 0.0, 2: 2.5, 3: 25.0},
+    '✨': {1: 0.0, 2: 0.0, 3: 0.0}  # Wild
+}
 
 
 class Currency(commands.Cog):
@@ -197,7 +207,7 @@ class Currency(commands.Cog):
                 await ctx.send(f"You can only bet on a number, or on the following allowed types: \
                                {', '.join(allowed)}.")
                 return
-        else:  # Get amount + check which bet it is
+        else:  # Check which bet it is
             bet = bet.lower()
             if bet in ['first', 'second', 'third']:
                 bet_payout = 2
@@ -389,6 +399,47 @@ class Currency(commands.Cog):
         await ctx.send(result_msg)
         del self.bj_active_games[user_id]
 
+    @commands.command(
+        help="Test your luck on the slot machines!",
+        brief="Bets on slot machines."
+    )
+    async def slot(self, ctx, amount):
+        balance = await read_currency(ctx.author.id)
+
+        if amount == "all":
+            amount = balance
+        try:
+            amount = int(amount)
+            if amount < 0:
+                await ctx.send(f"You cannot bet negative {self.emoji} flowers!")
+                return
+            if balance < amount:
+                await ctx.send(f"You cannot bet more than what you have!\n"
+                               f"You currently have {balance} {self.emoji} flowers!")
+                return
+        except ValueError:
+            await ctx.send(f"Unknown amount: {amount}")
+            return
+
+        await update_balance(ctx.author.id, -amount)
+
+        symbols = list("🍒" * 3 + "🍋" * 3 + "🔔" * 2 + "🍫" * 2 + "🎰" + "💎" + "✨")
+
+        for i in range(3):
+            np.random.sample()
+            result = np.random.choice(symbols, 9, False)
+            result = result.reshape((3, 3))
+
+        await ctx.send("\n".join(["".join(["".join(r) for r in res]) for res in result]))
+
+        payout = await _check_slot_win(result)
+        if payout > 0:
+            final = round(payout * amount)
+            await ctx.send(f"You win! You gained {final} {self.emoji} flowers!")
+            await update_balance(ctx.author.id, final)
+        else:
+            await ctx.send("You lose! Better luck next time!")
+
     # CHALLENGE
     @commands.command(
             help="Search flowers beyond the breach! Type in the password to claim flowers before the breach closes.",
@@ -512,6 +563,29 @@ async def _check_roulette_win(bet, result):
 
     else:
         return False
+
+
+async def _check_slot_win(result):
+    result = np.array(result)
+    row = result[1, :]
+
+    c = Counter(row)
+
+    wild_count = c.get('✨', 0)
+    if '✨' in c:
+        del c['✨']
+    if wild_count == 3:
+        return 50.0
+
+    max_payout = 0
+
+    for symbol in c:
+        total_matches = min(c[symbol] + wild_count, 3)
+        payout_for_symbol = PAYOUTS[symbol][total_matches]
+        if payout_for_symbol > max_payout:
+            max_payout = payout_for_symbol
+
+    return max_payout
 
 
 async def read_currency(user_id):
